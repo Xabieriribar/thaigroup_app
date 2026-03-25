@@ -39,8 +39,7 @@ function areEqualMapProps(prev: MapViewProps, next: MapViewProps) {
     if (
       left.member.id !== right.member.id ||
       left.member.avatar !== right.member.avatar ||
-      left.member.color !== right.member.color ||
-      left.isStale !== right.isStale
+      left.member.color !== right.member.color
     ) {
       return false;
     }
@@ -57,12 +56,8 @@ function areEqualMapProps(prev: MapViewProps, next: MapViewProps) {
     }
 
     if (
-      leftLocation.id !== rightLocation.id ||
       leftLocation.lat !== rightLocation.lat ||
-      leftLocation.lon !== rightLocation.lon ||
-      leftLocation.accuracy !== rightLocation.accuracy ||
-      leftLocation.created_at !== rightLocation.created_at ||
-      leftLocation.source !== rightLocation.source
+      leftLocation.lon !== rightLocation.lon
     ) {
       return false;
     }

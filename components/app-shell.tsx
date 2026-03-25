@@ -65,8 +65,8 @@ async function getCurrentPosition() {
   });
 }
 
-const GPS_MIN_INTERVAL_MS = 15_000;
-const GPS_MIN_DISTANCE_METERS = 25;
+const GPS_HEARTBEAT_INTERVAL_MS = 300_000;
+const GPS_MIN_DISTANCE_METERS = 75;
 const AUTO_SYNC_DELAY_MS = 8_000;
 const BACKGROUND_REFRESH_INTERVAL_MS = 90_000;
 
@@ -94,7 +94,9 @@ export function AppShell() {
 
   const refreshPendingCount = useEffectEvent(async () => {
     const pending = await loadPendingLocations();
-    setPendingCount(pending.length);
+    setPendingCount((current) =>
+      current === pending.length ? current : pending.length
+    );
     return pending;
   });
 
@@ -230,7 +232,8 @@ export function AppShell() {
     const movedMeters = distanceBetweenMeters(previousLocation, location);
 
     return (
-      elapsedMs >= GPS_MIN_INTERVAL_MS || movedMeters >= GPS_MIN_DISTANCE_METERS
+      movedMeters >= GPS_MIN_DISTANCE_METERS ||
+      elapsedMs >= GPS_HEARTBEAT_INTERVAL_MS
     );
   });
 
