@@ -60,9 +60,9 @@ async function getCurrentPosition() {
 
   return new Promise<GeolocationPosition>((resolve, reject) => {
     navigator.geolocation.getCurrentPosition(resolve, reject, {
-      enableHighAccuracy: true,
-      maximumAge: 10_000,
-      timeout: 20_000
+      enableHighAccuracy: false,
+      maximumAge: 120_000,
+      timeout: 15_000
     });
   });
 }
@@ -71,7 +71,7 @@ const GPS_HEARTBEAT_INTERVAL_MS = 300_000;
 const GPS_MIN_DISTANCE_METERS = 75;
 const AUTO_SYNC_DELAY_MS = 8_000;
 const BACKGROUND_REFRESH_INTERVAL_MS = 90_000;
-const FIRST_FIX_WAIT_MS = 12_000;
+const SHARE_POLL_INTERVAL_MS = 45_000;
 
 export function AppShell() {
   const [hydrated, setHydrated] = useState(false);
@@ -89,13 +89,12 @@ export function AppShell() {
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const watchIdRef = useRef<number | null>(null);
+  const shareIntervalRef = useRef<number | null>(null);
   const syncTimerRef = useRef<number | null>(null);
-  const firstFixTimerRef = useRef<number | null>(null);
   const syncInFlightRef = useRef(false);
+  const shareRequestInFlightRef = useRef(false);
   const sessionRef = useRef<SessionRecord | null>(null);
   const latestLocationsRef = useRef<LocationRow[]>([]);
-  const gotFirstWatchFixRef = useRef(false);
 
   const refreshPendingCount = useEffectEvent(async () => {
     const pending = await loadPendingLocations();
@@ -316,23 +315,51 @@ export function AppShell() {
     return location;
   });
 
+  const pollSharedLocation = useEffectEvent(async (announce = false) => {
+    if (shareRequestInFlightRef.current) {
+      return;
+    }
+
+    shareRequestInFlightRef.current = true;
+
+    try {
+      const position = await getCurrentPosition();
+      const location = buildLocationEvent(position, "gps");
+      await queueNewLocation(location, {
+        announce,
+        immediateSync: false
+      });
+      setError(null);
+    } catch (locationError) {
+      if (
+        locationError instanceof GeolocationPositionError &&
+        locationError.code === locationError.PERMISSION_DENIED
+      ) {
+        setError(geolocationErrorMessage(locationError));
+        await stopSharing();
+        return;
+      }
+
+      if (announce) {
+        setNotice("Esperando una señal de ubicación más estable...");
+      }
+    } finally {
+      shareRequestInFlightRef.current = false;
+      setSharingBusy(false);
+    }
+  });
+
   const stopSharing = useEffectEvent(async () => {
-    if (watchIdRef.current !== null && typeof window !== "undefined") {
-      navigator.geolocation.clearWatch(watchIdRef.current);
-      watchIdRef.current = null;
+    if (shareIntervalRef.current !== null && typeof window !== "undefined") {
+      window.clearInterval(shareIntervalRef.current);
+      shareIntervalRef.current = null;
     }
 
     if (syncTimerRef.current !== null && typeof window !== "undefined") {
       window.clearTimeout(syncTimerRef.current);
       syncTimerRef.current = null;
     }
-
-    if (firstFixTimerRef.current !== null && typeof window !== "undefined") {
-      window.clearTimeout(firstFixTimerRef.current);
-      firstFixTimerRef.current = null;
-    }
-
-    gotFirstWatchFixRef.current = false;
+    shareRequestInFlightRef.current = false;
 
     if (sessionRef.current?.sharingEnabled) {
       const nextSession = {
@@ -346,7 +373,7 @@ export function AppShell() {
   });
 
   const startSharing = useEffectEvent(async () => {
-    if (watchIdRef.current !== null || sharingBusy) {
+    if (shareIntervalRef.current !== null || sharingBusy) {
       return;
     }
 
@@ -357,46 +384,10 @@ export function AppShell() {
 
     try {
       setSharingBusy(true);
+      setNotice("Solicitando permiso de ubicación...");
       setError(null);
-      gotFirstWatchFixRef.current = false;
 
-      const watchId = navigator.geolocation.watchPosition(
-        (position) => {
-          const isFirstFix = !gotFirstWatchFixRef.current;
-          gotFirstWatchFixRef.current = true;
-
-          if (firstFixTimerRef.current !== null && typeof window !== "undefined") {
-            window.clearTimeout(firstFixTimerRef.current);
-            firstFixTimerRef.current = null;
-          }
-
-          if (isFirstFix) {
-            setSharingBusy(false);
-            setNotice("Compartir ubicación activado.");
-          }
-
-          void queueNewLocation(buildLocationEvent(position, "gps"), {
-            announce: false,
-            immediateSync: false
-          });
-        },
-        (watchError) => {
-          if (watchError.code === watchError.PERMISSION_DENIED) {
-            setError(geolocationErrorMessage(watchError));
-            void stopSharing();
-            return;
-          }
-
-          // Transient GPS failures are common on iPhone. Keep the watcher alive.
-          setSharingBusy(false);
-        },
-        {
-          enableHighAccuracy: true,
-          maximumAge: 60_000
-        }
-      );
-
-      watchIdRef.current = watchId;
+      const firstPollPromise = pollSharedLocation(true);
 
       if (sessionRef.current) {
         const nextSession = {
@@ -407,29 +398,17 @@ export function AppShell() {
       }
 
       if (typeof window !== "undefined") {
-        firstFixTimerRef.current = window.setTimeout(() => {
-          firstFixTimerRef.current = null;
-          setSharingBusy(false);
-
-          if (!gotFirstWatchFixRef.current) {
-            setNotice("Esperando primera señal GPS...");
-          }
-        }, FIRST_FIX_WAIT_MS);
+        shareIntervalRef.current = window.setInterval(() => {
+          void pollSharedLocation(false);
+        }, SHARE_POLL_INTERVAL_MS);
       }
 
-      // Best-effort first reading. Do not block sharing on this call.
-      void getCurrentPosition()
-        .then((firstPosition) =>
-          queueNewLocation(buildLocationEvent(firstPosition, "gps"), {
-            announce: false,
-            immediateSync: false
-          })
-        )
-        .catch(() => undefined);
+      setNotice("Compartir ubicación activado.");
+      await firstPollPromise;
     } catch (shareError) {
       setError(getErrorMessage(shareError));
     } finally {
-      if (watchIdRef.current === null) {
+      if (shareIntervalRef.current === null) {
         setSharingBusy(false);
       }
     }
@@ -458,20 +437,32 @@ export function AppShell() {
         return;
       }
 
-      sessionRef.current = cachedSession;
+      const normalizedSession =
+        cachedSession?.sharingEnabled && typeof window !== "undefined"
+          ? {
+              ...cachedSession,
+              sharingEnabled: false
+            }
+          : cachedSession;
+
+      sessionRef.current = normalizedSession;
+
+      if (
+        normalizedSession &&
+        cachedSession &&
+        normalizedSession.sharingEnabled !== cachedSession.sharingEnabled
+      ) {
+        await saveSession(normalizedSession);
+      }
 
       startTransition(() => {
-        setSession(cachedSession);
+        setSession(normalizedSession);
         setMembers(cachedMembers);
         setLatestLocations(cachedLocations);
         setLastSyncAt(cachedLastSync);
         setPendingCount(pending.length);
         setHydrated(true);
       });
-
-      if (cachedSession?.sharingEnabled) {
-        void startSharing();
-      }
 
       if (cachedSession && typeof window !== "undefined" && window.navigator.onLine) {
         void syncNow("boot");
@@ -481,19 +472,14 @@ export function AppShell() {
     return () => {
       cancelled = true;
 
-      if (watchIdRef.current !== null && typeof window !== "undefined") {
-        navigator.geolocation.clearWatch(watchIdRef.current);
-        watchIdRef.current = null;
+      if (shareIntervalRef.current !== null && typeof window !== "undefined") {
+        window.clearInterval(shareIntervalRef.current);
+        shareIntervalRef.current = null;
       }
 
       if (syncTimerRef.current !== null && typeof window !== "undefined") {
         window.clearTimeout(syncTimerRef.current);
         syncTimerRef.current = null;
-      }
-
-      if (firstFixTimerRef.current !== null && typeof window !== "undefined") {
-        window.clearTimeout(firstFixTimerRef.current);
-        firstFixTimerRef.current = null;
       }
     };
   }, [startSharing, syncNow]);
