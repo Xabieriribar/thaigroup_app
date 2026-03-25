@@ -187,6 +187,28 @@ export function mergeLatestLocation(
   return [nextLocation, ...filtered];
 }
 
+export function distanceBetweenMeters(
+  from: Pick<LocationRow, "lat" | "lon">,
+  to: Pick<LocationRow, "lat" | "lon">
+) {
+  const earthRadius = 6_371_000;
+  const toRadians = (value: number) => (value * Math.PI) / 180;
+  const dLat = toRadians(to.lat - from.lat);
+  const dLon = toRadians(to.lon - from.lon);
+  const lat1 = toRadians(from.lat);
+  const lat2 = toRadians(to.lat);
+
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(lat1) *
+      Math.cos(lat2) *
+      Math.sin(dLon / 2) *
+      Math.sin(dLon / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+
+  return earthRadius * c;
+}
+
 export function sortMembersByFreshness(
   members: MemberRow[],
   latestLocations: LocationRow[],

@@ -18,6 +18,7 @@ interface GroupDashboardProps {
   online: boolean;
   syncing: boolean;
   locating: boolean;
+  sharingBusy: boolean;
   pendingCount: number;
   lastSyncAt: string | null;
   notice: string | null;
@@ -37,6 +38,7 @@ export function GroupDashboard({
   online,
   syncing,
   locating,
+  sharingBusy,
   pendingCount,
   lastSyncAt,
   notice,
@@ -161,8 +163,13 @@ export function GroupDashboard({
                 void (session.sharingEnabled ? onStopSharing() : onStartSharing())
               }
               emphasis={session.sharingEnabled ? "muted" : "primary"}
+              disabled={sharingBusy}
             >
-              {session.sharingEnabled ? "Detener compartir" : "Empezar a compartir"}
+              {sharingBusy
+                ? "Activando..."
+                : session.sharingEnabled
+                  ? "Detener compartir"
+                  : "Empezar a compartir"}
             </ActionButton>
             <ActionButton onClick={() => void onMarkHere()} disabled={locating}>
               {locating ? "Buscando..." : "Estoy aquí"}

@@ -42,6 +42,7 @@ import type {
   SessionRecord
 } from "@/lib/types";
 import {
+  distanceBetweenMeters,
   geolocationErrorMessage,
   getErrorMessage,
   getMapsUrl,
@@ -64,6 +65,10 @@ async function getCurrentPosition() {
   });
 }
 
+const GPS_MIN_INTERVAL_MS = 15_000;
+const GPS_MIN_DISTANCE_METERS = 25;
+const AUTO_SYNC_DELAY_MS = 8_000;
+
 export function AppShell() {
   const [hydrated, setHydrated] = useState(false);
   const [session, setSession] = useState<SessionRecord | null>(null);
@@ -75,13 +80,16 @@ export function AppShell() {
   const [busy, setBusy] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [locating, setLocating] = useState(false);
+  const [sharingBusy, setSharingBusy] = useState(false);
   const [pendingCount, setPendingCount] = useState(0);
   const [lastSyncAt, setLastSyncAt] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const watchIdRef = useRef<number | null>(null);
+  const syncTimerRef = useRef<number | null>(null);
   const syncInFlightRef = useRef(false);
   const sessionRef = useRef<SessionRecord | null>(null);
+  const latestLocationsRef = useRef<LocationRow[]>([]);
 
   const refreshPendingCount = useEffectEvent(async () => {
     const pending = await loadPendingLocations();
@@ -108,6 +116,8 @@ export function AppShell() {
       replaceLatestLocations(snapshot.latestLocations)
     ]);
 
+    latestLocationsRef.current = snapshot.latestLocations;
+
     startTransition(() => {
       setMembers(snapshot.members);
       setLatestLocations(snapshot.latestLocations);
@@ -126,7 +136,9 @@ export function AppShell() {
     }
 
     syncInFlightRef.current = true;
-    setSyncing(true);
+    if (reason === "manual") {
+      setSyncing(true);
+    }
 
     try {
       const pending = await refreshPendingCount();
@@ -145,15 +157,33 @@ export function AppShell() {
       setLastSyncAt(now);
       setError(null);
 
-      if (reason !== "interval") {
+      if (["manual", "online", "create", "join"].includes(reason)) {
         setNotice("Sincronización completada.");
       }
     } catch (syncError) {
       setError(getErrorMessage(syncError));
     } finally {
       syncInFlightRef.current = false;
-      setSyncing(false);
+      if (reason === "manual") {
+        setSyncing(false);
+      }
     }
+  });
+
+  const scheduleSync = useEffectEvent(() => {
+    if (
+      typeof window === "undefined" ||
+      !window.navigator.onLine ||
+      !hasSupabaseEnv ||
+      syncTimerRef.current !== null
+    ) {
+      return;
+    }
+
+    syncTimerRef.current = window.setTimeout(() => {
+      syncTimerRef.current = null;
+      void syncNow("location");
+    }, AUTO_SYNC_DELAY_MS);
   });
 
   const buildLocationEvent = useEffectEvent(
@@ -180,29 +210,73 @@ export function AppShell() {
     }
   );
 
-  const queueNewLocation = useEffectEvent(async (location: LocationRow) => {
-    await Promise.all([enqueueLocation(location), saveLatestLocation(location)]);
-    await refreshPendingCount();
-
-    startTransition(() => {
-      setLatestLocations((current) => mergeLatestLocation(current, location));
-    });
-
-    setNotice(
-      window.navigator.onLine
-        ? "Ubicación guardada y lista para sincronizar."
-        : "Sin conexión: ubicación guardada en local."
+  const shouldStoreLocation = useEffectEvent((location: LocationRow) => {
+    const previousLocation = latestLocationsRef.current.find(
+      (item) => item.member_id === location.member_id
     );
 
-    if (window.navigator.onLine) {
-      void syncNow("location");
+    if (!previousLocation || location.source === "manual") {
+      return true;
     }
+
+    const elapsedMs =
+      new Date(location.created_at).getTime() -
+      new Date(previousLocation.created_at).getTime();
+    const movedMeters = distanceBetweenMeters(previousLocation, location);
+
+    return (
+      elapsedMs >= GPS_MIN_INTERVAL_MS || movedMeters >= GPS_MIN_DISTANCE_METERS
+    );
   });
+
+  const queueNewLocation = useEffectEvent(
+    async (
+      location: LocationRow,
+      options?: { announce?: boolean; immediateSync?: boolean }
+    ) => {
+      if (!shouldStoreLocation(location)) {
+        return location;
+      }
+
+      await Promise.all([enqueueLocation(location), saveLatestLocation(location)]);
+      await refreshPendingCount();
+
+      latestLocationsRef.current = mergeLatestLocation(
+        latestLocationsRef.current,
+        location
+      );
+
+      startTransition(() => {
+        setLatestLocations((current) => mergeLatestLocation(current, location));
+      });
+
+      if (options?.announce) {
+        setNotice(
+          window.navigator.onLine
+            ? "Ubicación guardada localmente."
+            : "Sin conexión: ubicación guardada en local."
+        );
+      }
+
+      if (window.navigator.onLine) {
+        if (options?.immediateSync) {
+          void syncNow("manual");
+        } else {
+          scheduleSync();
+        }
+      }
+
+      return location;
+    }
+  );
 
   const captureLocation = useEffectEvent(async (source: LocationSource) => {
     const position = await getCurrentPosition();
     const location = buildLocationEvent(position, source);
-    await queueNewLocation(location);
+    await queueNewLocation(location, {
+      announce: true,
+      immediateSync: source === "manual"
+    });
     return location;
   });
 
@@ -210,6 +284,11 @@ export function AppShell() {
     if (watchIdRef.current !== null && typeof window !== "undefined") {
       navigator.geolocation.clearWatch(watchIdRef.current);
       watchIdRef.current = null;
+    }
+
+    if (syncTimerRef.current !== null && typeof window !== "undefined") {
+      window.clearTimeout(syncTimerRef.current);
+      syncTimerRef.current = null;
     }
 
     if (sessionRef.current?.sharingEnabled) {
@@ -224,7 +303,7 @@ export function AppShell() {
   });
 
   const startSharing = useEffectEvent(async () => {
-    if (watchIdRef.current !== null) {
+    if (watchIdRef.current !== null || sharingBusy) {
       return;
     }
 
@@ -234,17 +313,36 @@ export function AppShell() {
     }
 
     try {
+      setSharingBusy(true);
+      setError(null);
+
+      const firstPosition = await getCurrentPosition();
+      const firstLocation = buildLocationEvent(firstPosition, "gps");
+
+      await queueNewLocation(firstLocation, {
+        announce: false,
+        immediateSync: false
+      });
+
       const watchId = navigator.geolocation.watchPosition(
         (position) => {
-          void queueNewLocation(buildLocationEvent(position, "gps"));
+          void queueNewLocation(buildLocationEvent(position, "gps"), {
+            announce: false,
+            immediateSync: false
+          });
         },
         (watchError) => {
-          setError(geolocationErrorMessage(watchError));
-          void stopSharing();
+          if (watchError.code === watchError.PERMISSION_DENIED) {
+            setError(geolocationErrorMessage(watchError));
+            void stopSharing();
+            return;
+          }
+
+          setNotice(geolocationErrorMessage(watchError));
         },
         {
           enableHighAccuracy: true,
-          maximumAge: 15_000,
+          maximumAge: 30_000,
           timeout: 25_000
         }
       );
@@ -260,13 +358,11 @@ export function AppShell() {
       }
 
       setError(null);
-      setNotice(
-        "Compartiendo ubicación mientras la app siga abierta en este dispositivo."
-      );
-
-      await captureLocation("gps");
+      setNotice("Compartir ubicación activado.");
     } catch (shareError) {
       setError(getErrorMessage(shareError));
+    } finally {
+      setSharingBusy(false);
     }
   });
 
@@ -320,8 +416,17 @@ export function AppShell() {
         navigator.geolocation.clearWatch(watchIdRef.current);
         watchIdRef.current = null;
       }
+
+      if (syncTimerRef.current !== null && typeof window !== "undefined") {
+        window.clearTimeout(syncTimerRef.current);
+        syncTimerRef.current = null;
+      }
     };
   }, [startSharing, syncNow]);
+
+  useEffect(() => {
+    latestLocationsRef.current = latestLocations;
+  }, [latestLocations]);
 
   useEffect(() => {
     if (!hydrated || typeof window === "undefined") {
@@ -462,6 +567,7 @@ export function AppShell() {
         setLastSyncAt(null);
         setNotice(null);
         setError(null);
+        setSharingBusy(false);
       });
     } catch (resetError) {
       setError(getErrorMessage(resetError));
@@ -517,6 +623,7 @@ export function AppShell() {
       online={online}
       syncing={syncing}
       locating={locating}
+      sharingBusy={sharingBusy}
       pendingCount={pendingCount}
       lastSyncAt={lastSyncAt}
       notice={notice}

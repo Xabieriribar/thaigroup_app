@@ -19,17 +19,19 @@ interface MapCanvasProps {
 }
 
 function Recenter({
-  center,
+  lat,
+  lon,
   zoom
 }: {
-  center: [number, number];
+  lat: number;
+  lon: number;
   zoom: number;
 }) {
   const map = useMap();
 
   useEffect(() => {
-    map.setView(center, zoom, { animate: true });
-  }, [center, map, zoom]);
+    map.setView([lat, lon], zoom, { animate: false });
+  }, [lat, lon, map, zoom]);
 
   return null;
 }
@@ -71,7 +73,11 @@ export default function MapCanvas({
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution="&copy; OpenStreetMap contributors"
       />
-      <Recenter center={center} zoom={currentMemberLocation ? 14 : 11} />
+      <Recenter
+        lat={center[0]}
+        lon={center[1]}
+        zoom={currentMemberLocation ? 14 : 11}
+      />
 
       {visibleLocations.map((presence) => {
         const location = presence.location;
