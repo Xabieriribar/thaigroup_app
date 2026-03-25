@@ -53,6 +53,17 @@ import {
   sortMembersByFreshness
 } from "@/lib/utils";
 
+function isGeolocationError(
+  error: unknown
+): error is Pick<GeolocationPositionError, "code"> {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    typeof (error as { code?: unknown }).code === "number"
+  );
+}
+
 async function getCurrentPosition() {
   if (typeof window === "undefined" || !("geolocation" in navigator)) {
     throw new Error("La geolocalización no está disponible en este dispositivo.");
@@ -332,8 +343,8 @@ export function AppShell() {
       setError(null);
     } catch (locationError) {
       if (
-        locationError instanceof GeolocationPositionError &&
-        locationError.code === locationError.PERMISSION_DENIED
+        isGeolocationError(locationError) &&
+        locationError.code === 1
       ) {
         setError(geolocationErrorMessage(locationError));
         await stopSharing();
@@ -384,10 +395,17 @@ export function AppShell() {
 
     try {
       setSharingBusy(true);
-      setNotice("Solicitando permiso de ubicación...");
       setError(null);
+      setNotice(null);
 
-      const firstPollPromise = pollSharedLocation(true);
+      // Safari on iPhone behaves better when the first geolocation request
+      // happens directly from the tap handler before any other async work.
+      const firstPosition = await getCurrentPosition();
+      const firstLocation = buildLocationEvent(firstPosition, "gps");
+      await queueNewLocation(firstLocation, {
+        announce: true,
+        immediateSync: false
+      });
 
       if (sessionRef.current) {
         const nextSession = {
@@ -398,19 +416,39 @@ export function AppShell() {
       }
 
       if (typeof window !== "undefined") {
+        if (shareIntervalRef.current !== null) {
+          window.clearInterval(shareIntervalRef.current);
+        }
+
         shareIntervalRef.current = window.setInterval(() => {
           void pollSharedLocation(false);
         }, SHARE_POLL_INTERVAL_MS);
       }
 
       setNotice("Compartir ubicación activado.");
-      await firstPollPromise;
     } catch (shareError) {
-      setError(getErrorMessage(shareError));
-    } finally {
-      if (shareIntervalRef.current === null) {
-        setSharingBusy(false);
+      if (isGeolocationError(shareError)) {
+        setError(geolocationErrorMessage(shareError));
+      } else {
+        setError(getErrorMessage(shareError));
       }
+
+      if (sessionRef.current?.sharingEnabled) {
+        const nextSession = {
+          ...sessionRef.current,
+          sharingEnabled: false
+        };
+        await applySession(nextSession);
+      }
+
+      if (shareIntervalRef.current !== null && typeof window !== "undefined") {
+        window.clearInterval(shareIntervalRef.current);
+        shareIntervalRef.current = null;
+      }
+
+      setNotice(null);
+    } finally {
+      setSharingBusy(false);
     }
   });
 

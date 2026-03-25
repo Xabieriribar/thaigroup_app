@@ -112,13 +112,15 @@ export function getErrorMessage(error: unknown) {
   return "Ha ocurrido un error inesperado.";
 }
 
-export function geolocationErrorMessage(error: GeolocationPositionError) {
+export function geolocationErrorMessage(
+  error: Pick<GeolocationPositionError, "code">
+) {
   switch (error.code) {
-    case error.PERMISSION_DENIED:
+    case 1:
       return "Permiso de geolocalización denegado.";
-    case error.POSITION_UNAVAILABLE:
+    case 2:
       return "No se pudo obtener la ubicación actual.";
-    case error.TIMEOUT:
+    case 3:
       return "La ubicación tardó demasiado en responder.";
     default:
       return "No se pudo acceder a la geolocalización.";
