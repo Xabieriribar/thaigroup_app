@@ -187,6 +187,56 @@ export function mergeLatestLocation(
   return [nextLocation, ...filtered];
 }
 
+export function sameMembers(left: MemberRow[], right: MemberRow[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+
+    if (
+      a.id !== b.id ||
+      a.group_id !== b.group_id ||
+      a.display_name !== b.display_name ||
+      a.avatar !== b.avatar ||
+      a.color !== b.color ||
+      a.created_at !== b.created_at
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+export function sameLocations(left: LocationRow[], right: LocationRow[]) {
+  if (left.length !== right.length) {
+    return false;
+  }
+
+  for (let index = 0; index < left.length; index += 1) {
+    const a = left[index];
+    const b = right[index];
+
+    if (
+      a.id !== b.id ||
+      a.member_id !== b.member_id ||
+      a.group_id !== b.group_id ||
+      a.lat !== b.lat ||
+      a.lon !== b.lon ||
+      a.accuracy !== b.accuracy ||
+      a.created_at !== b.created_at ||
+      a.source !== b.source
+    ) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function distanceBetweenMeters(
   from: Pick<LocationRow, "lat" | "lon">,
   to: Pick<LocationRow, "lat" | "lon">
