@@ -1,8 +1,7 @@
 "use client";
 
 import { divIcon } from "leaflet";
-import { useEffect } from "react";
-import { MapContainer, Marker, Popup, TileLayer, useMap } from "react-leaflet";
+import { MapContainer, Marker, Popup, TileLayer } from "react-leaflet";
 import type { MemberPresence } from "@/lib/types";
 import {
   buildMarkerHtml,
@@ -16,24 +15,6 @@ interface MapCanvasProps {
   presences: MemberPresence[];
   currentMemberId: string;
   fallbackText: string;
-}
-
-function Recenter({
-  lat,
-  lon,
-  zoom
-}: {
-  lat: number;
-  lon: number;
-  zoom: number;
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    map.setView([lat, lon], zoom, { animate: false });
-  }, [lat, lon, map, zoom]);
-
-  return null;
 }
 
 export default function MapCanvas({
@@ -72,11 +53,6 @@ export default function MapCanvas({
       <TileLayer
         url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         attribution="&copy; OpenStreetMap contributors"
-      />
-      <Recenter
-        lat={center[0]}
-        lon={center[1]}
-        zoom={currentMemberLocation ? 14 : 11}
       />
 
       {visibleLocations.map((presence) => {
