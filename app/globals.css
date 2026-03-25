@@ -39,9 +39,8 @@ a {
 }
 
 .glass-card {
-  background: var(--card);
+  background: rgba(8, 14, 28, 0.94);
   border: 1px solid var(--card-border);
-  backdrop-filter: blur(18px);
 }
 
 button,
@@ -61,12 +60,31 @@ code {
 .leaflet-container {
   height: 100%;
   width: 100%;
-  background: linear-gradient(180deg, #0f172a 0%, #020617 100%);
+  background: #020617;
   font-family: inherit;
+  isolation: isolate;
+  -webkit-transform: translateZ(0);
+  transform: translateZ(0);
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
 }
 
 .leaflet-control-attribution {
   display: none;
+}
+
+.leaflet-pane,
+.leaflet-tile,
+.leaflet-marker-icon,
+.leaflet-marker-shadow,
+.leaflet-zoom-animated {
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.leaflet-fade-anim .leaflet-tile,
+.leaflet-zoom-anim .leaflet-zoom-animated {
+  transition: none !important;
 }
 
 .leaflet-popup-content-wrapper,
@@ -80,4 +98,22 @@ code {
   margin: 0;
   min-width: 160px;
   padding: 0.1rem;
+}
+
+.map-panel {
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  background: #08101c;
+}
+
+.map-frame {
+  border: 1px solid rgba(148, 163, 184, 0.12);
+  background: #020617;
+  isolation: isolate;
+  contain: layout paint;
+}
+
+.map-shell {
+  isolation: isolate;
+  contain: layout paint;
+  background: #020617;
 }

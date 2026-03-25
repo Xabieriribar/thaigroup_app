@@ -2,12 +2,11 @@
 
 import {
   divIcon,
-  layerGroup,
   map as createLeafletMap,
   marker,
   tileLayer,
-  type LayerGroup,
-  type Map as LeafletMap
+  type Map as LeafletMap,
+  type Marker as LeafletMarker
 } from "leaflet";
 import { useEffect, useRef } from "react";
 import type { MemberPresence } from "@/lib/types";
@@ -32,8 +31,9 @@ export default function MapCanvas({
 }: MapCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<LeafletMap | null>(null);
-  const markersRef = useRef<LayerGroup | null>(null);
-  const initializedRef = useRef(false);
+  const markersRef = useRef(new Map<string, LeafletMarker>());
+  const resizeObserverRef = useRef<ResizeObserver | null>(null);
+  const hasCenteredRef = useRef(false);
 
   const visibleLocations = presences.filter((presence) => presence.location);
   const currentMemberLocation = visibleLocations.find(
@@ -56,38 +56,54 @@ export default function MapCanvas({
     const mapInstance = createLeafletMap(containerRef.current, {
       center,
       zoom,
+      fadeAnimation: false,
+      zoomAnimation: false,
+      markerZoomAnimation: false,
+      inertia: false,
+      preferCanvas: true,
+      trackResize: true,
       zoomControl: true,
       attributionControl: false
     });
 
     tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: "&copy; OpenStreetMap contributors"
+      attribution: "&copy; OpenStreetMap contributors",
+      updateWhenIdle: true,
+      updateWhenZooming: false,
+      keepBuffer: 6
     }).addTo(mapInstance);
 
-    const markersLayer = layerGroup().addTo(mapInstance);
-
     mapRef.current = mapInstance;
-    markersRef.current = markersLayer;
-    initializedRef.current = true;
+    hasCenteredRef.current = true;
+
+    if (typeof ResizeObserver !== "undefined") {
+      resizeObserverRef.current = new ResizeObserver(() => {
+        mapInstance.invalidateSize(false);
+      });
+      resizeObserverRef.current.observe(containerRef.current);
+    }
 
     return () => {
-      markersLayer.clearLayers();
+      resizeObserverRef.current?.disconnect();
+      resizeObserverRef.current = null;
+      markersRef.current.forEach((markerInstance) => {
+        markerInstance.remove();
+      });
+      markersRef.current.clear();
       mapInstance.remove();
       mapRef.current = null;
-      markersRef.current = null;
-      initializedRef.current = false;
+      hasCenteredRef.current = false;
     };
   }, [currentMemberLocation, firstKnownLocation]);
 
   useEffect(() => {
     const mapInstance = mapRef.current;
-    const markersLayer = markersRef.current;
 
-    if (!mapInstance || !markersLayer) {
+    if (!mapInstance) {
       return;
     }
 
-    markersLayer.clearLayers();
+    const nextIds = new Set<string>();
 
     visibleLocations.forEach((presence) => {
       const location = presence.location;
@@ -96,21 +112,9 @@ export default function MapCanvas({
         return;
       }
 
-      const markerInstance = marker([location.lat, location.lon], {
-        zIndexOffset: presence.member.id === currentMemberId ? 500 : 0,
-        icon: divIcon({
-          className: "thaigroup-marker",
-          html: buildMarkerHtml(presence.member, {
-            stale: presence.isStale,
-            self: presence.member.id === currentMemberId
-          }),
-          iconSize: [42, 42],
-          iconAnchor: [21, 21],
-          popupAnchor: [0, -18]
-        })
-      });
+      nextIds.add(presence.member.id);
 
-      markerInstance.bindPopup(`
+      const popupHtml = `
         <div class="space-y-1 text-sm">
           <p class="font-semibold text-white">${buildPresenceLabel(
             presence.member,
@@ -123,16 +127,55 @@ export default function MapCanvas({
             location.accuracy
           )}</p>
         </div>
-      `);
+      `;
 
-      markerInstance.addTo(markersLayer);
+      const nextIcon = divIcon({
+        className: "thaigroup-marker",
+        html: buildMarkerHtml(presence.member, {
+          stale: presence.isStale,
+          self: presence.member.id === currentMemberId
+        }),
+        iconSize: [42, 42],
+        iconAnchor: [21, 21],
+        popupAnchor: [0, -18]
+      });
+
+      const existingMarker = markersRef.current.get(presence.member.id);
+
+      if (existingMarker) {
+        existingMarker.setLatLng([location.lat, location.lon]);
+        existingMarker.setIcon(nextIcon);
+        existingMarker.setZIndexOffset(
+          presence.member.id === currentMemberId ? 500 : 0
+        );
+
+        if (existingMarker.getPopup()) {
+          existingMarker.setPopupContent(popupHtml);
+        } else {
+          existingMarker.bindPopup(popupHtml);
+        }
+
+        return;
+      }
+
+      const markerInstance = marker([location.lat, location.lon], {
+        zIndexOffset: presence.member.id === currentMemberId ? 500 : 0,
+        icon: nextIcon
+      });
+
+      markerInstance.bindPopup(popupHtml);
+      markerInstance.addTo(mapInstance);
+      markersRef.current.set(presence.member.id, markerInstance);
     });
 
-    // Only center once, on first successful render with a known location.
-    if (
-      !initializedRef.current &&
-      (currentMemberLocation || firstKnownLocation)
-    ) {
+    markersRef.current.forEach((markerInstance, memberId) => {
+      if (!nextIds.has(memberId)) {
+        markerInstance.remove();
+        markersRef.current.delete(memberId);
+      }
+    });
+
+    if (!hasCenteredRef.current && (currentMemberLocation || firstKnownLocation)) {
       const centerLocation = currentMemberLocation ?? firstKnownLocation;
 
       if (centerLocation) {
@@ -143,15 +186,9 @@ export default function MapCanvas({
             animate: false
           }
         );
+        hasCenteredRef.current = true;
       }
-
-      initializedRef.current = true;
     }
-
-    // Leaflet sometimes needs this after layout changes on mobile Safari.
-    window.requestAnimationFrame(() => {
-      mapInstance.invalidateSize(false);
-    });
   }, [currentMemberId, currentMemberLocation, firstKnownLocation, visibleLocations]);
 
   if (!currentMemberLocation && !firstKnownLocation) {
@@ -162,5 +199,5 @@ export default function MapCanvas({
     );
   }
 
-  return <div ref={containerRef} className="h-full w-full" />;
+  return <div ref={containerRef} className="map-shell h-full w-full" />;
 }

@@ -183,7 +183,7 @@ export function GroupDashboard({
           </div>
         </section>
 
-        <section className="glass-card rounded-[2rem] p-3 shadow-2xl shadow-black/20 sm:p-4">
+        <section className="map-panel rounded-[2rem] p-3 sm:p-4">
           <div className="mb-3 flex items-center justify-between gap-3 px-1">
             <div>
               <h2 className="text-lg font-semibold text-white">Mapa del grupo</h2>
@@ -197,7 +197,7 @@ export function GroupDashboard({
             </span>
           </div>
 
-          <div className="h-[330px] overflow-hidden rounded-[1.6rem] border border-white/10 bg-slate-950/70">
+          <div className="map-frame h-[330px] overflow-hidden rounded-[1.6rem]">
             <MapView
               presences={presences}
               currentMemberId={session.member.id}

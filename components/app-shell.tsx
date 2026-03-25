@@ -68,6 +68,7 @@ async function getCurrentPosition() {
 const GPS_MIN_INTERVAL_MS = 15_000;
 const GPS_MIN_DISTANCE_METERS = 25;
 const AUTO_SYNC_DELAY_MS = 8_000;
+const BACKGROUND_REFRESH_INTERVAL_MS = 90_000;
 
 export function AppShell() {
   const [hydrated, setHydrated] = useState(false);
@@ -147,6 +148,10 @@ export function AppShell() {
         await uploadPendingLocations(pending);
         await removePendingLocations(pending.map((location) => location.id));
         setPendingCount(0);
+      }
+
+      if (reason === "location") {
+        return;
       }
 
       const snapshot = await fetchGroupSnapshot(sessionRef.current.group.id);
@@ -460,7 +465,7 @@ export function AppShell() {
 
     const intervalId = window.setInterval(() => {
       void syncNow("interval");
-    }, 30_000);
+    }, BACKGROUND_REFRESH_INTERVAL_MS);
 
     return () => window.clearInterval(intervalId);
   }, [hydrated, session, syncNow]);
