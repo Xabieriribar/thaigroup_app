@@ -46,16 +46,9 @@ export default function MapCanvas({
       return;
     }
 
-    const center: [number, number] = currentMemberLocation
-      ? [currentMemberLocation.lat, currentMemberLocation.lon]
-      : firstKnownLocation
-        ? [firstKnownLocation.lat, firstKnownLocation.lon]
-        : DEFAULT_MAP_CENTER;
-    const zoom = currentMemberLocation ? 14 : 11;
-
     const mapInstance = createLeafletMap(containerRef.current, {
-      center,
-      zoom,
+      center: DEFAULT_MAP_CENTER,
+      zoom: 11,
       fadeAnimation: false,
       zoomAnimation: false,
       markerZoomAnimation: false,
@@ -74,7 +67,7 @@ export default function MapCanvas({
     }).addTo(mapInstance);
 
     mapRef.current = mapInstance;
-    hasCenteredRef.current = true;
+    hasCenteredRef.current = false;
 
     if (typeof ResizeObserver !== "undefined") {
       resizeObserverRef.current = new ResizeObserver(() => {
@@ -94,7 +87,7 @@ export default function MapCanvas({
       mapRef.current = null;
       hasCenteredRef.current = false;
     };
-  }, [currentMemberLocation, firstKnownLocation]);
+  }, []);
 
   useEffect(() => {
     const mapInstance = mapRef.current;
@@ -191,13 +184,14 @@ export default function MapCanvas({
     }
   }, [currentMemberId, currentMemberLocation, firstKnownLocation, visibleLocations]);
 
-  if (!currentMemberLocation && !firstKnownLocation) {
-    return (
-      <div className="grid h-full place-items-center bg-slate-950/70 px-6 text-center text-sm text-slate-300">
-        {fallbackText}
-      </div>
-    );
-  }
-
-  return <div ref={containerRef} className="map-shell h-full w-full" />;
+  return (
+    <div className="relative h-full w-full">
+      <div ref={containerRef} className="map-shell h-full w-full" />
+      {!currentMemberLocation && !firstKnownLocation ? (
+        <div className="pointer-events-none absolute inset-0 grid place-items-center bg-slate-950/70 px-6 text-center text-sm text-slate-300">
+          {fallbackText}
+        </div>
+      ) : null}
+    </div>
+  );
 }
